@@ -54,7 +54,7 @@ public class MentionListener: NSObject {
     /**
      @brief The UITextView being handled by the MentionListener
      */
-    internal let mentionsTextView: UITextView
+    internal weak var mentionsTextView: UITextView?
 
     /**
      @brief Called when the UITextView is not editing a mention.
@@ -155,9 +155,14 @@ public class MentionListener: NSObject {
         self.hideMentions = hideMentions
         self.didHandleMentionOnReturn = didHandleMentionOnReturn
         self.showMentionsListWithString = showMentionsListWithString
-        self.mentionsTextView.typingAttributes = self.defaultTextAttributes.dictionary
+        mentionsTextView.typingAttributes = self.defaultTextAttributes.dictionary
         super.init()
         mentionsTextView.delegate = self
+    }
+
+    deinit {
+        cooldownTimer?.invalidate()
+        cooldownTimer = nil
     }
 }
 
@@ -168,8 +173,8 @@ extension MentionListener /* Public */ {
     public func reset() {
         mentions = []
 
-        mentionsTextView.text = ""
-        mentionsTextView.typingAttributes = defaultTextAttributes.dictionary
+        mentionsTextView?.text = ""
+        mentionsTextView?.typingAttributes = defaultTextAttributes.dictionary
     }
 
     /**
@@ -179,6 +184,8 @@ extension MentionListener /* Public */ {
      mentions arrtay and apply mention attributes to the provided ranges
      */
     public func insertExistingMentions(_ existingMentions: [(CreateMention, NSRange)]) {
+        guard let mentionsTextView else { return }
+
         mentions = mentions |> insert(existingMentions)
 
         let (text, selectedRange) = mentionsTextView.attributedText
@@ -196,7 +203,7 @@ extension MentionListener /* Public */ {
      @return Bool: Whether or not a mention was added
      */
     @discardableResult public func addMention(_ createMention: CreateMention) -> Bool {
-        guard currentMentionRange.location != NSNotFound else { return false }
+        guard let mentionsTextView, currentMentionRange.location != NSNotFound else { return false }
 
         mentions = mentions
             |> add(createMention, spaceAfterMention: spaceAfterMention, at: currentMentionRange)
@@ -222,6 +229,8 @@ extension MentionListener /* Internal */ {
      @param timer: the timer that called the method
      */
     @objc internal func cooldownTimerFired(_: Timer) {
+        guard let mentionsTextView else { return }
+
         if filterString != stringCurrentlyBeingFiltered,
             !filterString.isEmpty, !filterString.contains(" ") || searchSpaces {
             stringCurrentlyBeingFiltered = filterString
@@ -246,6 +255,8 @@ extension MentionListener /* Private */ {
      otherwise call `hideMentions`
      */
     private func handleMentionsList(_ textView: UITextView, range: NSRange) {
+        guard let mentionsTextView else { return }
+
         let startIndex = mentionsTextView.text.startIndex
         let endIndex = mentionsTextView.text.index(startIndex,
                                                    offsetBy: min(NSMaxRange(range), mentionsTextView.text.count))
@@ -302,15 +313,15 @@ extension MentionListener /* Private */ {
      on the text view.
      */
     private func clearMention() -> (Mention?) -> Void {
-        return { mention in
-            guard let mention = mention else { return }
+        return { [weak self] mention in
+            guard let self, let mention = mention, let mentionsTextView = self.mentionsTextView else { return }
 
             self.mentions = self.mentions |> remove([mention])
 
-            let (text, selectedRange) = self.mentionsTextView.attributedText
+            let (text, selectedRange) = mentionsTextView.attributedText
                 |> apply(self.defaultTextAttributes, range: mention.range)
-            self.mentionsTextView.attributedText = text
-            self.mentionsTextView.selectedRange = selectedRange
+            mentionsTextView.attributedText = text
+            mentionsTextView.selectedRange = selectedRange
         }
     }
 
@@ -347,7 +358,7 @@ extension MentionListener: UITextViewDelegate {
             // Nothing to do here.
             shouldChangeText = false
         } else {
-            if let mention = mentions |> mentionBeingEdited(at: range) {
+            if let mention = mentions |> mentionBeingEdited(at: range), let mentionsTextView {
                 mention |> clearMention()
                 let values: (text: NSAttributedString, selectedRange: NSRange)
                 let replacementRange: NSRange
